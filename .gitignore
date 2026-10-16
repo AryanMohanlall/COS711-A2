@@ -1,0 +1,23 @@
+# Competition data (download from Kaggle, never commit)
+data/*
+!data/.gitkeep
+
+# Model weights / run outputs
+*.pt
+*.pth
+*.onnx
+checkpoints/
+runs/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Kaggle credentials
+kaggle.json
