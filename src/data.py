@@ -100,16 +100,20 @@ def load_image(path: str | Path) -> np.ndarray:
     return img
 
 
-def instance_mask(polygons: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
+def instance_mask(polygons: list[np.ndarray], shape: tuple[int, int], scale: float = 1.0) -> np.ndarray:
     """Rasterise polygons into an instance label map (0 = background, i+1 = i-th polygon).
 
-    Where polygons overlap, the later one wins.
+    `scale` rasterises directly at another resolution (e.g. 0.5 for 1024 px), which keeps thin
+    filaments intact better than resizing a full-resolution mask. Where polygons overlap,
+    the later one wins.
     """
+    shift = 4  # sub-pixel precision for fillPoly
     mask = np.zeros(shape, dtype=np.int32)
     for i, poly in enumerate(polygons, start=1):
-        cv2.fillPoly(mask, [np.round(poly).astype(np.int32)], color=i)
+        pts = np.round(poly * scale * (1 << shift)).astype(np.int32)
+        cv2.fillPoly(mask, [pts], color=i, shift=shift)
     return mask
 
 
-def instance_mask_for(image_id: str, anns: pd.DataFrame, shape=(2048, 2048)) -> np.ndarray:
-    return instance_mask(list(anns.loc[anns["image_id"] == image_id, "polygon"]), shape)
+def instance_mask_for(image_id: str, anns: pd.DataFrame, shape=(2048, 2048), scale: float = 1.0) -> np.ndarray:
+    return instance_mask(list(anns.loc[anns["image_id"] == image_id, "polygon"]), shape, scale)
