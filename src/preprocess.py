@@ -41,3 +41,75 @@ def disk_mask(shape: tuple[int, int], cx: float, cy: float, radius: float, scale
     """Boolean mask of pixels within `scale * radius` of the disk centre."""
     yy, xx = np.ogrid[: shape[0], : shape[1]]
     return (xx - cx) ** 2 + (yy - cy) ** 2 <= (scale * radius) ** 2
+
+
+def radial_profile(img: np.ndarray, cx: float, cy: float, radius: float,
+                   n_bins: int = 100, work: int = 512) -> tuple[np.ndarray, np.ndarray]:
+    """Median intensity as a function of r / R (limb-darkening curve), estimated at low resolution.
+
+    The median ignores small dark filaments and bright plage within each ring.
+    """
+    s = work / img.shape[0]
+    small = cv2.resize(img, (work, work), interpolation=cv2.INTER_AREA).astype(np.float32)
+    yy, xx = np.mgrid[:work, :work]
+    rr = np.hypot(xx - cx * s, yy - cy * s) / (radius * s)
+    edges = np.linspace(0, 1, n_bins + 1)
+    idx = np.digitize(rr, edges) - 1
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    prof = np.array([np.median(small[idx == i]) if (idx == i).any() else np.nan for i in range(n_bins)])
+    good = ~np.isnan(prof)
+    return centres[good], prof[good]
+
+
+def correct_limb_darkening(img: np.ndarray, cx: float, cy: float, radius: float) -> np.ndarray:
+    """Divide by the image's own radial median profile. Quiet Sun → ≈ 1 everywhere on the disk."""
+    r_c, prof = radial_profile(img, cx, cy, radius)
+    yy, xx = np.ogrid[: img.shape[0], : img.shape[1]]
+    rr = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / radius
+    denom = np.interp(rr, r_c, prof).astype(np.float32)
+    return img.astype(np.float32) / np.maximum(denom, 1.0)
+
+
+def flatten_background(ratio: np.ndarray, cx: float, cy: float, radius: float,
+                       work: int = 256, kernel_frac: float = 0.25) -> np.ndarray:
+    """Remove large-scale illumination gradients / haze from a limb-corrected image.
+
+    Background = median filter with a window of `kernel_frac` of the image (~500 px at full
+    resolution), far wider than filaments (median width ~12 px), so filaments are not absorbed.
+    Off-disk pixels are filled with 1 before filtering so the limb does not bias the estimate.
+    """
+    H = ratio.shape[0]
+    s = work / H
+    small = cv2.resize(ratio, (work, work), interpolation=cv2.INTER_AREA)
+    inside = disk_mask(small.shape, cx * s, cy * s, radius * s, 0.98)
+    small = np.where(inside, small, 1.0).astype(np.float32)
+    # medianBlur needs uint8 for large kernels: encode ratio in [0, 2] as 0..255
+    enc = np.clip(small * 127.5, 0, 255).astype(np.uint8)
+    k = int(kernel_frac * work) | 1
+    bg = cv2.medianBlur(enc, k).astype(np.float32) / 127.5
+    bg = cv2.resize(bg, (H, H), interpolation=cv2.INTER_LINEAR)
+    return ratio / np.maximum(bg, 0.2)
+
+
+def preprocess(img: np.ndarray, mode: str = "full", disk: tuple[float, float, float] | None = None,
+               limb_cut: float = 0.985) -> np.ndarray:
+    """Preprocess one H-alpha image to float32.
+
+    mode:
+      "raw"     intensity / 255, off-disk kept
+      "limb"    limb-darkening corrected ratio (quiet Sun ≈ 1), pixels beyond limb_cut·R set to 1
+      "full"    limb correction + large-scale background flattening, beyond limb_cut·R set to 1
+
+    limb_cut: dividing by the radial profile amplifies the 1–2 px limb rim into a ring artefact at
+    r ≥ 0.985 R; only 0.036% of annotated polygon vertices lie beyond that radius.
+    """
+    if mode == "raw":
+        return img.astype(np.float32) / 255.0
+    cx, cy, r = disk if disk is not None else find_disk(img)
+    out = correct_limb_darkening(img, cx, cy, r)
+    if mode == "full":
+        out = flatten_background(out, cx, cy, r)
+    elif mode != "limb":
+        raise ValueError(f"Unknown mode {mode!r}")
+    out[~disk_mask(out.shape, cx, cy, r, limb_cut)] = 1.0
+    return np.clip(out, 0, 2).astype(np.float32)
