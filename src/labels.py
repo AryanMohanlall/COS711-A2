@@ -1,17 +1,5 @@
-"""Combining multiple annotation sets of one observation into training labels.
-
-151 observations have 3 annotation sets and 145 have 2. Annotators disagree a lot
-(inter-annotator PQ ≈ 0.36, 18% of filaments missed by the other annotator), so we compare:
-
-- "each":  every annotation set is its own training sample (no fusion)
-- "union": a pixel is filament if any annotator marked it
-- "vote":  a pixel is filament if at least ceil(n/2) annotators marked it
-           (n=1 → 1, n=2 → 1, n=3 → 2; for n=2 this equals the union)
-- "intersection": every annotator marked it (used for the leave-one-out comparison)
-- soft_label(): fraction of annotators marking each pixel, for soft-target training
-
-Fused instances are the connected components of the fused foreground.
-"""
+"""Fusing several annotation sets of one observation: union (any), vote (≥ ceil(n/2)), intersection (all)
+or soft labels. Fused instances are connected components of the fused foreground."""
 import math
 
 import cv2

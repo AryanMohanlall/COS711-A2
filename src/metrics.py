@@ -1,18 +1,11 @@
-"""Local Panoptic Quality (Kirillov et al., 2019) for validating without Kaggle submissions.
-
-Single "filament" class. A predicted and a ground-truth instance match when IoU > 0.5,
-which makes the matching unique. PQ = sum(IoU of matches) / (TP + FP/2 + FN/2) = SQ * RQ.
-
-TODO: confirm against the Kaggle Evaluation page (aggregation over images, empty-image handling).
-"""
+"""Local Panoptic Quality (Kirillov et al., 2019): instances match at IoU > 0.5, PQ = SQ * RQ.
+TODO: confirm against the Kaggle Evaluation page (aggregation over images, empty-image handling)."""
 import numpy as np
 
 
 def match_instances(gt: np.ndarray, pred: np.ndarray, iou_thresh: float = 0.5) -> dict:
     """Match instances between two label maps (0 = background).
-
-    Returns a dict with tp, fp, fn, the summed IoU of matched pairs and the matched pairs.
-    """
+    Returns tp, fp, fn, the summed IoU of matched pairs and the matched pairs."""
     gt_ids = np.unique(gt)
     gt_ids = gt_ids[gt_ids != 0]
     pred_ids = np.unique(pred)

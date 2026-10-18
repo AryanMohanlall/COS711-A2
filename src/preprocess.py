@@ -1,19 +1,12 @@
-"""Image preprocessing: solar disk geometry (and later normalisation / limb-darkening correction).
-
-Findings from notebooks/01_data_exploration.ipynb: GONG images are already centred and
-rescaled, disk radius 906 ± 1.6 px, centre within ~2 px of the image centre.
-"""
+"""Image preprocessing: solar disk detection, limb-darkening correction and background flattening.
+GONG disks are already centred and rescaled (radius 906 ± 1.6 px, notebook 01)."""
 import cv2
 import numpy as np
 
 
 def find_disk(img: np.ndarray, size: int = 512, n_rays: int = 360) -> tuple[float, float, float]:
-    """Locate the solar disk as (cx, cy, radius) in full-resolution pixels.
-
-    Casts rays from the image centre, takes the strongest outward intensity drop on each ray
-    (the limb), and fits a circle to those points with one round of outlier rejection.
-    Robust to the bright off-limb halo that breaks global thresholding (Otsu).
-    """
+    """Locate the solar disk as (cx, cy, radius): fit a circle to the strongest intensity drop on rays
+    from the centre. Robust to the bright off-limb halo that breaks Otsu thresholding."""
     scale = img.shape[0] / size
     small = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA).astype(np.float32)
     small = cv2.GaussianBlur(small, (0, 0), 1.0)
@@ -45,10 +38,8 @@ def disk_mask(shape: tuple[int, int], cx: float, cy: float, radius: float, scale
 
 def radial_profile(img: np.ndarray, cx: float, cy: float, radius: float,
                    n_bins: int = 100, work: int = 512) -> tuple[np.ndarray, np.ndarray]:
-    """Median intensity as a function of r / R (limb-darkening curve), estimated at low resolution.
-
-    The median ignores small dark filaments and bright plage within each ring.
-    """
+    """Median intensity vs r / R (limb-darkening curve) at low resolution.
+    The median ignores small dark filaments and bright plage within each ring."""
     s = work / img.shape[0]
     small = cv2.resize(img, (work, work), interpolation=cv2.INTER_AREA).astype(np.float32)
     yy, xx = np.mgrid[:work, :work]
@@ -72,12 +63,8 @@ def correct_limb_darkening(img: np.ndarray, cx: float, cy: float, radius: float)
 
 def flatten_background(ratio: np.ndarray, cx: float, cy: float, radius: float,
                        work: int = 256, kernel_frac: float = 0.25) -> np.ndarray:
-    """Remove large-scale illumination gradients / haze from a limb-corrected image.
-
-    Background = median filter with a window of `kernel_frac` of the image (~500 px at full
-    resolution), far wider than filaments (median width ~12 px), so filaments are not absorbed.
-    Off-disk pixels are filled with 1 before filtering so the limb does not bias the estimate.
-    """
+    """Divide out large-scale gradients / haze, estimated with a ~500 px median filter (filaments ~12 px
+    wide are not absorbed). Off-disk pixels are set to 1 first so the limb does not bias it."""
     H = ratio.shape[0]
     s = work / H
     small = cv2.resize(ratio, (work, work), interpolation=cv2.INTER_AREA)
@@ -93,16 +80,8 @@ def flatten_background(ratio: np.ndarray, cx: float, cy: float, radius: float,
 
 def preprocess(img: np.ndarray, mode: str = "full", disk: tuple[float, float, float] | None = None,
                limb_cut: float = 0.985) -> np.ndarray:
-    """Preprocess one H-alpha image to float32.
-
-    mode:
-      "raw"     intensity / 255, off-disk kept
-      "limb"    limb-darkening corrected ratio (quiet Sun ≈ 1), pixels beyond limb_cut·R set to 1
-      "full"    limb correction + large-scale background flattening, beyond limb_cut·R set to 1
-
-    limb_cut: dividing by the radial profile amplifies the 1–2 px limb rim into a ring artefact at
-    r ≥ 0.985 R; only 0.036% of annotated polygon vertices lie beyond that radius.
-    """
+    """mode: "raw" (/255), "limb" (limb-darkening corrected, quiet Sun ≈ 1) or "full" (limb + flattening).
+    limb/full set pixels beyond limb_cut·R to 1, removing the ring artefact from the limb rim."""
     if mode == "raw":
         return img.astype(np.float32) / 255.0
     cx, cy, r = disk if disk is not None else find_disk(img)

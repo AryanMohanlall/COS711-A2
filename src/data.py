@@ -1,14 +1,5 @@
 """Data loading for the MAGFiLO Kaggle 2026 data (COCO-format annotations).
-
-Layout of the competition data:
-    MAGFiLO_1.0_Kaggle_2026/
-        train/MAGFiLO_1.0_Annotations_kaggle2026_train.json
-        train/train_images/<YYYYMMDDhhmmss><site>h.jpeg
-        test/test_images/<YYYYMMDDhhmmss><site>h.jpeg
-
-One observation (image file) can have several annotation sets: the JSON "images"
-entry id is "<set_id>-<observation>", e.g. "050102-20111116063134Lh".
-"""
+An observation can have several annotation sets; JSON image ids are "<set_id>-<observation>"."""
 import json
 import os
 from pathlib import Path
@@ -58,13 +49,8 @@ def parse_observation(file_name: str) -> dict:
 
 
 def load_annotations(data_dir: Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load the training annotations.
-
-    Returns
-    -------
-    images : one row per annotation set (image_id), with obs / time / site / set_id columns.
-    anns   : one row per filament instance, with polygon and spine as (N, 2) float arrays.
-    """
+    """Return (images, anns): one row per annotation set with obs / time / site / set_id,
+    and one row per filament with polygon and spine as (N, 2) float arrays."""
     data_dir = data_dir or get_data_dir()
     with open(data_dir / "train" / ANNOTATION_FILE) as f:
         coco = json.load(f)
@@ -101,12 +87,8 @@ def load_image(path: str | Path) -> np.ndarray:
 
 
 def instance_mask(polygons: list[np.ndarray], shape: tuple[int, int], scale: float = 1.0) -> np.ndarray:
-    """Rasterise polygons into an instance label map (0 = background, i+1 = i-th polygon).
-
-    `scale` rasterises directly at another resolution (e.g. 0.5 for 1024 px), which keeps thin
-    filaments intact better than resizing a full-resolution mask. Where polygons overlap,
-    the later one wins.
-    """
+    """Rasterise polygons into an instance map (0 = background); later polygons win overlaps.
+    `scale` rasterises directly at another resolution, keeping thin filaments better than resizing."""
     shift = 4  # sub-pixel precision for fillPoly
     mask = np.zeros(shape, dtype=np.int32)
     for i, poly in enumerate(polygons, start=1):
