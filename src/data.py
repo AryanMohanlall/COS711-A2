@@ -1,29 +1,101 @@
-"""Data loading, normalisation and the PyTorch Dataset.
-
-Filled in once the Kaggle data format is known (see notebooks/01_data_exploration.ipynb).
-"""
+"""Data loading for the MAGFiLO Kaggle 2026 data (COCO-format annotations).
+An observation can have several annotation sets; JSON image ids are "<set_id>-<observation>"."""
+import json
 import os
 from pathlib import Path
+
+import cv2
+import numpy as np
+import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DATA_DIR = REPO_ROOT / "data"
 KAGGLE_INPUT_DIR = Path("/kaggle/input")
+ANNOTATION_FILE = "MAGFiLO_1.0_Annotations_kaggle2026_train.json"
+
+# GONG network site codes (letter before the trailing "h" in the file name)
+SITES = {
+    "B": "Big Bear",
+    "C": "Cerro Tololo",
+    "L": "Learmonth",
+    "M": "Mauna Loa",
+    "T": "El Teide",
+    "U": "Udaipur",
+}
+
+CATEGORIES = {1: "Left", 2: "Right", 3: "Unidentifiable", 4: "Ambiguous"}
 
 
 def get_data_dir() -> Path:
-    """Return the competition data directory, locally or on Kaggle.
+    """Return the dataset root (the folder containing train/ and test/), locally or on Kaggle."""
+    override = os.environ.get("COS711_DATA_DIR")
+    if override:
+        return Path(override)
+    base = KAGGLE_INPUT_DIR if KAGGLE_INPUT_DIR.exists() else LOCAL_DATA_DIR
+    hits = sorted(base.rglob(ANNOTATION_FILE))
+    if not hits:
+        raise FileNotFoundError(f"{ANNOTATION_FILE} not found under {base}")
+    return hits[0].parent.parent
 
-    On Kaggle the attached competition data lives under /kaggle/input/<competition-slug>/.
-    Locally, unzip the competition data into ./data/.
-    """
-    if KAGGLE_INPUT_DIR.exists():
-        candidates = [p for p in KAGGLE_INPUT_DIR.iterdir() if p.is_dir()]
-        if len(candidates) == 1:
-            return candidates[0]
-        override = os.environ.get("COS711_DATA_DIR")
-        if override:
-            return Path(override)
-        raise RuntimeError(
-            f"Multiple inputs attached {candidates}; set COS711_DATA_DIR to the competition folder."
-        )
-    return LOCAL_DATA_DIR
+
+def parse_observation(file_name: str) -> dict:
+    """'20111116063134Lh.jpeg' -> {'obs': '20111116063134Lh', 'time': Timestamp, 'site': 'L'}."""
+    stem = Path(file_name).stem
+    return {
+        "obs": stem,
+        "time": pd.to_datetime(stem[:14], format="%Y%m%d%H%M%S"),
+        "site": stem[14],
+    }
+
+
+def load_annotations(data_dir: Path | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (images, anns): one row per annotation set with obs / time / site / set_id,
+    and one row per filament with polygon and spine as (N, 2) float arrays."""
+    data_dir = data_dir or get_data_dir()
+    with open(data_dir / "train" / ANNOTATION_FILE) as f:
+        coco = json.load(f)
+
+    images = pd.DataFrame(coco["images"]).rename(columns={"id": "image_id"})
+    images["set_id"] = images["image_id"].str.split("-").str[0]
+    meta = pd.DataFrame([parse_observation(fn) for fn in images["file_name"]])
+    images = pd.concat([images, meta], axis=1)
+    images["path"] = [str(data_dir / "train" / "train_images" / fn) for fn in images["file_name"]]
+
+    anns = pd.DataFrame(coco["annotations"])
+    anns["polygon"] = [np.asarray(s[0], dtype=np.float32).reshape(-1, 2) for s in anns["segmentation"]]
+    anns["spine"] = [np.asarray(s, dtype=np.float32).reshape(-1, 2) for s in anns["spine"]]
+    anns["category"] = anns["category_id"].map(CATEGORIES)
+    anns = anns.drop(columns=["segmentation"])
+    anns = anns.merge(images[["image_id", "obs", "site", "set_id"]], on="image_id", how="left")
+    return images, anns
+
+
+def list_test_images(data_dir: Path | None = None) -> pd.DataFrame:
+    data_dir = data_dir or get_data_dir()
+    folder = data_dir / "test" / "test_images"
+    rows = [{**parse_observation(fn), "file_name": fn, "path": str(folder / fn)}
+            for fn in sorted(os.listdir(folder))]
+    return pd.DataFrame(rows)
+
+
+def load_image(path: str | Path) -> np.ndarray:
+    """Load an H-alpha image as a 2D uint8 array."""
+    img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise IOError(f"Could not read {path}")
+    return img
+
+
+def instance_mask(polygons: list[np.ndarray], shape: tuple[int, int], scale: float = 1.0) -> np.ndarray:
+    """Rasterise polygons into an instance map (0 = background); later polygons win overlaps.
+    `scale` rasterises directly at another resolution, keeping thin filaments better than resizing."""
+    shift = 4  # sub-pixel precision for fillPoly
+    mask = np.zeros(shape, dtype=np.int32)
+    for i, poly in enumerate(polygons, start=1):
+        pts = np.round(poly * scale * (1 << shift)).astype(np.int32)
+        cv2.fillPoly(mask, [pts], color=i, shift=shift)
+    return mask
+
+
+def instance_mask_for(image_id: str, anns: pd.DataFrame, shape=(2048, 2048), scale: float = 1.0) -> np.ndarray:
+    return instance_mask(list(anns.loc[anns["image_id"] == image_id, "polygon"]), shape, scale)
