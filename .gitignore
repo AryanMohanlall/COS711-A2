@@ -9,6 +9,7 @@ data/*
 checkpoints/
 runs/
 outputs/
+cache/
 
 # Python
 __pycache__/

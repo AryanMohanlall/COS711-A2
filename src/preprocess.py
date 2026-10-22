@@ -1,7 +1,14 @@
 """Image preprocessing: solar disk detection, limb-darkening correction and background flattening.
 GONG disks are already centred and rescaled (radius 906 ± 1.6 px, notebook 01)."""
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import cv2
 import numpy as np
+
+from .data import REPO_ROOT, load_image
+
+CACHE_DIR = REPO_ROOT / "cache"
 
 
 def find_disk(img: np.ndarray, size: int = 512, n_rays: int = 360) -> tuple[float, float, float]:
@@ -92,3 +99,28 @@ def preprocess(img: np.ndarray, mode: str = "full", disk: tuple[float, float, fl
         raise ValueError(f"Unknown mode {mode!r}")
     out[~disk_mask(out.shape, cx, cy, r, limb_cut)] = 1.0
     return np.clip(out, 0, 2).astype(np.float32)
+
+
+def load_preprocessed(path: str | Path, disk: tuple[float, float, float] | None = None, size: int = 1024,
+                      mode: str = "full", cache_dir: Path | None = None) -> np.ndarray:
+    """Preprocessed image resized to `size` px, cached as float16 .npy on first use.
+    disk: full-resolution (cx, cy, radius), e.g. from artifacts/image_stats.csv; detected if omitted."""
+    folder = Path(cache_dir or CACHE_DIR) / f"{mode}_{size}"
+    f = folder / f"{Path(path).stem}.npy"
+    if f.exists():
+        return np.load(f).astype(np.float32)
+    x = preprocess(load_image(path), mode, disk)
+    x = cv2.resize(x, (size, size), interpolation=cv2.INTER_AREA).astype(np.float16)
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(f".{np.random.randint(1 << 30)}.tmp")  # write then rename: safe with parallel loaders
+    with open(tmp, "wb") as fh:
+        np.save(fh, x)
+    tmp.replace(f)
+    return x.astype(np.float32)
+
+
+def build_cache(paths, disks=None, workers: int = 8, **kwargs) -> None:
+    """Fill the cache for every image in `paths` (disks: matching full-resolution geometries or None)."""
+    disks = list(disks) if disks is not None else [None] * len(paths)
+    with ThreadPoolExecutor(workers) as ex:
+        list(ex.map(lambda a: load_preprocessed(*a, **kwargs), zip(paths, disks)))
