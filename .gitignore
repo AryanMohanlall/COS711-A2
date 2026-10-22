@@ -21,3 +21,12 @@ venv/
 
 # Kaggle credentials
 kaggle.json
+artifacts/*
+
+
+artifacts/annotation_set_stats.csv
+artifacts/annotation_set_stats.csv
+artifacts/annotation_set_stats.csv
+figures/01/appearance_per_site.png
+./figures/**/*.png
+
