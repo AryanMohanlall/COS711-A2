@@ -10,3 +10,4 @@ albumentations
 tqdm
 kaggle
 jupyter
+segmentation-models-pytorch
