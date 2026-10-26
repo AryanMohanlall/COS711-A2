@@ -99,7 +99,4 @@ def instance_mask(polygons: list[np.ndarray], shape: tuple[int, int], scale: flo
 
 def instance_mask_for(image_id: str, anns: pd.DataFrame, shape=(2048, 2048), scale: float = 1.0) -> np.ndarray:
     return instance_mask(list(anns.loc[anns["image_id"] == image_id, "polygon"]), shape, scale)
-
-def load_data():
-    '''Loads preprocessed images and their corresponding annotations'''
     
