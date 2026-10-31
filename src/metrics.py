@@ -1,5 +1,7 @@
 """Local Panoptic Quality (Kirillov et al., 2019): instances match at IoU > 0.5, PQ = SQ * RQ.
-TODO: confirm against the Kaggle Evaluation page (aggregation over images, empty-image handling)."""
+The competition scores the same PQ, but does not document how it aggregates over images: locally TP / FP / FN
+are pooled over the whole dataset (`panoptic_quality_dataset`), which gave 0.40 on validation vs 0.34 on the
+public leaderboard."""
 import numpy as np
 
 
